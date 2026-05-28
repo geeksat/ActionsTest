@@ -20,7 +20,6 @@ if (-not $regionCode) {
     $regionCode = 'unk'
 }
 
-# Dummy data that mimics something fetched from CCS
 $landingZones = @(
     "hub-$regionCode"
     ("shared-$Environment").ToLower()
@@ -41,11 +40,11 @@ $stageAObject = [pscustomobject]@{
 }
 
 New-Item -ItemType Directory -Path "./generated" -Force | Out-Null
+
 $stageAObject |
-    ConvertTo-Json -Depth 5 |
+    ConvertTo-Json -Depth 10 |
     Set-Content -Path "./generated/stage-a-output.json"
 
-# GitHub Actions step outputs
 "lz_array_csv=$lzCsv" | Add-Content -Path $env:GITHUB_OUTPUT
 "vnet_name=$vnetName" | Add-Content -Path $env:GITHUB_OUTPUT
 "region_code=$regionCode" | Add-Content -Path $env:GITHUB_OUTPUT
@@ -53,4 +52,3 @@ $stageAObject |
 Write-Host "Stage A complete"
 Write-Host "Landing Zones: $lzCsv"
 Write-Host "VNet Name: $vnetName"
-Write-Host "File created: ./generated/stage-a-output.json"
