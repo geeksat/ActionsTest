@@ -68,9 +68,12 @@ $parameterObject |
 $subnetValuesJson = $subnets | ConvertTo-Json -Compress -Depth 20
 
 "parameter_file_path=$parameterFilePath" | Add-Content -Path $env:GITHUB_OUTPUT
-"subnet_values_json=$subnetValuesJson" | Add-Content -Path $env:GITHUB_OUTPUT
 "vnet_name=$VNetName" | Add-Content -Path $env:GITHUB_OUTPUT
 "location=$Location" | Add-Content -Path $env:GITHUB_OUTPUT
+
+"subnet_values_json<<EOF" | Add-Content -Path $env:GITHUB_OUTPUT
+$subnetValuesJson | Add-Content -Path $env:GITHUB_OUTPUT
+"EOF" | Add-Content -Path $env:GITHUB_OUTPUT
 
 Write-Host "Stage B complete"
 Write-Host "Subnets created:"
