@@ -23,6 +23,9 @@ on:
         default: demo-subscription
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   stage_a_read_from_ccs:
     name: Pipeline A - Stage A - ReadFromCCS
@@ -85,7 +88,7 @@ jobs:
             -RegionCode "${{ needs.stage_a_read_from_ccs.outputs.region_code }}" `
             -StageAFilePath "./generated/stage-a-output.json"
 
-      - name: Print Stage B outputs
+      - name: Debug Stage B outputs
         shell: pwsh
         env:
           SUBNET_VALUES_JSON: ${{ steps.build_params.outputs.subnet_values_json }}
@@ -94,53 +97,13 @@ jobs:
           Write-Host "VNet Name: ${{ steps.build_params.outputs.vnet_name }}"
           Write-Host "Subnets JSON: $env:SUBNET_VALUES_JSON"
 
-  trigger_pipeline_b:
-    name: Pipeline A - Trigger Pipeline B
-    runs-on: ubuntu-latest
+  call_pipeline_b:
+    name: Pipeline A - Call Pipeline B
     needs: stage_b_build_parameter_file
-
-    steps:
-      - name: Send subnet values to Repo B
-        shell: pwsh
-        env:
-          REPO_B_PAT: ${{ secrets.REPO_B_PAT }}
-          TARGET_OWNER: geeksat
-          TARGET_REPO: ReceiverRepo
-          LOCATION: ${{ needs.stage_b_build_parameter_file.outputs.location }}
-          VNET_NAME: ${{ needs.stage_b_build_parameter_file.outputs.vnet_name }}
-          SUBNET_VALUES_JSON: ${{ needs.stage_b_build_parameter_file.outputs.subnet_values_json }}
-        run: |
-          if (-not $env:REPO_B_PAT) {
-            throw "Missing secret REPO_B_PAT in Repo A"
-          }
-
-          $headers = @{
-            Authorization = "token $env:REPO_B_PAT"
-            Accept = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-
-          $subnets = $env:SUBNET_VALUES_JSON | ConvertFrom-Json
-
-          $body = @{
-            event_type = "pipeline-a-subnets"
-            client_payload = @{
-              sourceRepo = "${{ github.repository }}"
-              sourceRunId = "${{ github.run_id }}"
-              sourceWorkflow = "${{ github.workflow }}"
-              location = $env:LOCATION
-              vnetName = $env:VNET_NAME
-              subnets = $subnets
-            }
-          } | ConvertTo-Json -Depth 20
-
-          Write-Host "Dispatch body:"
-          Write-Host $body
-
-          Invoke-RestMethod `
-            -Uri "https://api.github.com/repos/$env:TARGET_OWNER/$env:TARGET_REPO/dispatches" `
-            -Method POST `
-            -Headers $headers `
-            -Body $body
-
-          Write-Host "Repo B triggered successfully."
+    uses: geeksat/ReceiverRepo/.github/workflows/pipeline-b-receive-subnets.yml@main
+    with:
+      source_repo: ${{ github.repository }}
+      source_run_id: ${{ github.run_id }}
+      location: ${{ needs.stage_b_build_parameter_file.outputs.location }}
+      vnet_name: ${{ needs.stage_b_build_parameter_file.outputs.vnet_name }}
+      subnet_values_json: ${{ needs.stage_b_build_parameter_file.outputs.subnet_values_json }}
