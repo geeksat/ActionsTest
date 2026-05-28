@@ -23,16 +23,17 @@ on:
         default: demo-subscription
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   read_from_ccs:
     name: Stage A - ReadFromCCS
     runs-on: ubuntu-latest
-
     outputs:
       lz_array_csv: ${{ steps.read_ccs.outputs.lz_array_csv }}
       vnet_name: ${{ steps.read_ccs.outputs.vnet_name }}
       region_code: ${{ steps.read_ccs.outputs.region_code }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,10 +57,11 @@ jobs:
     name: Stage B - BuildParameterFile
     runs-on: ubuntu-latest
     needs: read_from_ccs
-
     outputs:
       parameter_file_path: ${{ steps.build_params.outputs.parameter_file_path }}
-
+      subnet_values_json: ${{ steps.build_params.outputs.subnet_values_json }}
+      vnet_name: ${{ steps.build_params.outputs.vnet_name }}
+      location: ${{ steps.build_params.outputs.location }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,3 +89,35 @@ jobs:
         shell: pwsh
         run: |
           Get-Content "./generated/parameter-file.json"
+
+  trigger_repo_b:
+    name: Repo A - Trigger Repo B
+    runs-on: ubuntu-latest
+    needs: build_parameter_file
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: your-org
+          repositories: your-repo-b
+
+      - name: Trigger Repo B workflow
+        shell: pwsh
+        run: |
+          ./scripts/Trigger-ReceiverWorkflow.ps1 `
+            -Token "${{ steps.app-token.outputs.token }}" `
+            -TargetOwner "your-org" `
+            -TargetRepo "your-repo-b" `
+            -WorkflowFile "receiver-print-subnets.yml" `
+            -Ref "main" `
+            -SourceRepo "${{ github.repository }}" `
+            -SourceRunId "${{ github.run_id }}" `
+            -Location "${{ needs.build_parameter_file.outputs.location }}" `
+            -VNetName "${{ needs.build_parameter_file.outputs.vnet_name }}" `
+            -SubnetsJson '${{ needs.build_parameter_file.outputs.subnet_values_json }}'
