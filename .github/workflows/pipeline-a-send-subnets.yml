@@ -104,8 +104,8 @@ jobs:
         shell: pwsh
         env:
           REPO_B_PAT: ${{ secrets.REPO_B_PAT }}
-          TARGET_OWNER: your-github-org-or-user
-          TARGET_REPO: your-repo-b-name
+          TARGET_OWNER: geeksat
+          TARGET_REPO: ReceiverRepo
           LOCATION: ${{ needs.stage_b_build_parameter_file.outputs.location }}
           VNET_NAME: ${{ needs.stage_b_build_parameter_file.outputs.vnet_name }}
           SUBNET_VALUES_JSON: ${{ needs.stage_b_build_parameter_file.outputs.subnet_values_json }}
