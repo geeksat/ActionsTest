@@ -1,0 +1,146 @@
+name: Pipeline A - Build and Send Subnets
+
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: Location
+        required: true
+        default: West Europe
+        type: choice
+        options:
+          - West Europe
+          - East US 2
+          - West US 3
+      environment:
+        description: Environment
+        required: true
+        default: DEV
+        type: string
+      subscriptionName:
+        description: Subscription Name
+        required: true
+        default: demo-subscription
+        type: string
+
+jobs:
+  stage_a_read_from_ccs:
+    name: Pipeline A - Stage A - ReadFromCCS
+    runs-on: ubuntu-latest
+
+    outputs:
+      lz_array_csv: ${{ steps.read_ccs.outputs.lz_array_csv }}
+      vnet_name: ${{ steps.read_ccs.outputs.vnet_name }}
+      region_code: ${{ steps.read_ccs.outputs.region_code }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Stage A script
+        id: read_ccs
+        shell: pwsh
+        run: |
+          ./scripts/Read-FromCCS-Dummy.ps1 `
+            -Location "${{ inputs.location }}" `
+            -Environment "${{ inputs.environment }}" `
+            -SubscriptionName "${{ inputs.subscriptionName }}"
+
+      - name: Upload Stage A file
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-a-output
+          path: generated/stage-a-output.json
+
+  stage_b_build_parameter_file:
+    name: Pipeline A - Stage B - BuildParameterFile
+    runs-on: ubuntu-latest
+    needs: stage_a_read_from_ccs
+
+    outputs:
+      subnet_values_json: ${{ steps.build_params.outputs.subnet_values_json }}
+      vnet_name: ${{ steps.build_params.outputs.vnet_name }}
+      location: ${{ steps.build_params.outputs.location }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Stage A file
+        uses: actions/download-artifact@v4
+        with:
+          name: stage-a-output
+          path: generated
+
+      - name: Run Stage B script
+        id: build_params
+        shell: pwsh
+        run: |
+          ./scripts/Build-ParameterFile-Dummy.ps1 `
+            -Location "${{ inputs.location }}" `
+            -Environment "${{ inputs.environment }}" `
+            -SubscriptionName "${{ inputs.subscriptionName }}" `
+            -FinalLZArrayCsv "${{ needs.stage_a_read_from_ccs.outputs.lz_array_csv }}" `
+            -VNetName "${{ needs.stage_a_read_from_ccs.outputs.vnet_name }}" `
+            -RegionCode "${{ needs.stage_a_read_from_ccs.outputs.region_code }}" `
+            -StageAFilePath "./generated/stage-a-output.json"
+
+      - name: Print Stage B outputs
+        shell: pwsh
+        env:
+          SUBNET_VALUES_JSON: ${{ steps.build_params.outputs.subnet_values_json }}
+        run: |
+          Write-Host "Location: ${{ steps.build_params.outputs.location }}"
+          Write-Host "VNet Name: ${{ steps.build_params.outputs.vnet_name }}"
+          Write-Host "Subnets JSON: $env:SUBNET_VALUES_JSON"
+
+  trigger_pipeline_b:
+    name: Pipeline A - Trigger Pipeline B
+    runs-on: ubuntu-latest
+    needs: stage_b_build_parameter_file
+
+    steps:
+      - name: Send subnet values to Repo B
+        shell: pwsh
+        env:
+          REPO_B_PAT: ${{ secrets.REPO_B_PAT }}
+          TARGET_OWNER: your-github-org-or-user
+          TARGET_REPO: your-repo-b-name
+          LOCATION: ${{ needs.stage_b_build_parameter_file.outputs.location }}
+          VNET_NAME: ${{ needs.stage_b_build_parameter_file.outputs.vnet_name }}
+          SUBNET_VALUES_JSON: ${{ needs.stage_b_build_parameter_file.outputs.subnet_values_json }}
+        run: |
+          if (-not $env:REPO_B_PAT) {
+            throw "Missing secret REPO_B_PAT in Repo A"
+          }
+
+          $headers = @{
+            Authorization = "token $env:REPO_B_PAT"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $subnets = $env:SUBNET_VALUES_JSON | ConvertFrom-Json
+
+          $body = @{
+            event_type = "pipeline-a-subnets"
+            client_payload = @{
+              sourceRepo = "${{ github.repository }}"
+              sourceRunId = "${{ github.run_id }}"
+              sourceWorkflow = "${{ github.workflow }}"
+              location = $env:LOCATION
+              vnetName = $env:VNET_NAME
+              subnets = $subnets
+            }
+          } | ConvertTo-Json -Depth 20
+
+          Write-Host "Dispatch body:"
+          Write-Host $body
+
+          Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/$env:TARGET_OWNER/$env:TARGET_REPO/dispatches" `
+            -Method POST `
+            -Headers $headers `
+            -Body $body
+
+          Write-Host "Repo B triggered successfully."
