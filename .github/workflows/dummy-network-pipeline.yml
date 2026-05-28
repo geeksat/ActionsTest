@@ -104,16 +104,16 @@ jobs:
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: your-org
-          repositories: your-repo-b
+          owner: geeksat
+          repositories: ReceiverRepo
 
       - name: Trigger Repo B workflow
         shell: pwsh
         run: |
           ./scripts/Trigger-ReceiverWorkflow.ps1 `
             -Token "${{ steps.app-token.outputs.token }}" `
-            -TargetOwner "your-org" `
-            -TargetRepo "your-repo-b" `
+            -TargetOwner "geeksat" `
+            -TargetRepo "ReceiverRepo" `
             -WorkflowFile "receiver-print-subnets.yml" `
             -Ref "main" `
             -SourceRepo "${{ github.repository }}" `
