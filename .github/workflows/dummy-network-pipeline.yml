@@ -1,4 +1,5 @@
-name: Dummy Network Pipeline
+name: Dummy Network Pipeline - API Dispatch
+run-name: Sender | ${{ inputs.environment }} | ${{ inputs.location }}
 
 on:
   workflow_dispatch:
@@ -91,13 +92,11 @@ jobs:
           Get-Content "./generated/parameter-file.json"
 
   trigger_repo_b:
-    name: Repo A - Trigger Repo B
+    name: Trigger Repo B workflow_dispatch
     runs-on: ubuntu-latest
     needs: build_parameter_file
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
+    steps:
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -105,19 +104,79 @@ jobs:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: geeksat
-          repositories: ReceiverRepo
+          repositories: |
+            ReceiverRepo
 
-      - name: Trigger Repo B workflow
+      - name: Dispatch Repo B workflow
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_OWNER: geeksat
+          TARGET_REPO: ReceiverRepo
+          TARGET_WORKFLOW: receiver-print-subnets.yml
+          TARGET_REF: main
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          LOCATION: ${{ needs.build_parameter_file.outputs.location }}
+          VNET_NAME: ${{ needs.build_parameter_file.outputs.vnet_name }}
+          SUBNETS_JSON: ${{ needs.build_parameter_file.outputs.subnet_values_json }}
         run: |
-          ./scripts/Trigger-ReceiverWorkflow.ps1 `
-            -Token "${{ steps.app-token.outputs.token }}" `
-            -TargetOwner "geeksat" `
-            -TargetRepo "ReceiverRepo" `
-            -WorkflowFile "receiver-print-subnets.yml" `
-            -Ref "main" `
-            -SourceRepo "${{ github.repository }}" `
-            -SourceRunId "${{ github.run_id }}" `
-            -Location "${{ needs.build_parameter_file.outputs.location }}" `
-            -VNetName "${{ needs.build_parameter_file.outputs.vnet_name }}" `
-            -SubnetsJson '${{ needs.build_parameter_file.outputs.subnet_values_json }}'
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $body = @{
+            ref = $env:TARGET_REF
+            inputs = @{
+              source_repo   = $env:SOURCE_REPO
+              source_run_id = $env:SOURCE_RUN_ID
+              location      = $env:LOCATION
+              vnet_name     = $env:VNET_NAME
+              subnets_json  = $env:SUBNETS_JSON
+            }
+          } | ConvertTo-Json -Depth 20 -Compress
+
+          Write-Host "Dispatch body:"
+          Write-Host $body
+
+          Invoke-RestMethod `
+            -Method POST `
+            -Uri "https://api.github.com/repos/$env:TARGET_OWNER/$env:TARGET_REPO/actions/workflows/$env:TARGET_WORKFLOW/dispatches" `
+            -Headers $headers `
+            -Body $body `
+            -ContentType "application/json"
+
+          Write-Host "Repo B workflow_dispatch sent successfully."
+
+      - name: Verify Repo B run exists
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_OWNER: geeksat
+          TARGET_REPO: ReceiverRepo
+          TARGET_WORKFLOW: receiver-print-subnets.yml
+        run: |
+          Start-Sleep -Seconds 8
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $response = Invoke-RestMethod `
+            -Method GET `
+            -Uri "https://api.github.com/repos/$env:TARGET_OWNER/$env:TARGET_REPO/actions/workflows/$env:TARGET_WORKFLOW/runs?per_page=5" `
+            -Headers $headers
+
+          $latest = $response.workflow_runs | Select-Object -First 1
+
+          if (-not $latest) {
+            throw "No workflow runs found in Repo B."
+          }
+
+          Write-Host "Latest Repo B run URL: $($latest.html_url)"
+          Write-Host "Latest Repo B run status: $($latest.status)"
+          Write-Host "Latest Repo B run conclusion: $($latest.conclusion)"
