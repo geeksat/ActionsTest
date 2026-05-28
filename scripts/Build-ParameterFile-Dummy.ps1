@@ -28,6 +28,24 @@ if (-not (Test-Path $StageAFilePath)) {
 $stageAData = Get-Content $StageAFilePath -Raw | ConvertFrom-Json
 $landingZones = $FinalLZArrayCsv -split ',' | ForEach-Object { $_.Trim() }
 
+$subnets = @(
+    [pscustomobject]@{
+        name = "GatewaySubnet"
+        cidr = "10.20.0.0/27"
+        type = "gateway"
+    },
+    [pscustomobject]@{
+        name = "Data"
+        cidr = "10.20.0.32/27"
+        type = "workload"
+    },
+    [pscustomobject]@{
+        name = "Services"
+        cidr = "10.20.0.64/27"
+        type = "shared"
+    }
+)
+
 $parameterObject = [pscustomobject]@{
     location               = $Location
     environment            = $Environment
@@ -36,31 +54,27 @@ $parameterObject = [pscustomobject]@{
     vnetName               = $VNetName
     landingZonesFromStageA = $landingZones
     stageAFileCreatedAtUtc = $stageAData.createdAtUtc
-    subnets                = @(
-        @{
-            name = "GatewaySubnet"
-            cidr = "10.0.0.0/27"
-        },
-        @{
-            name = "Data"
-            cidr = "10.0.0.32/27"
-        },
-        @{
-            name = "Services"
-            cidr = "10.0.0.64/27"
-        }
-    )
+    subnets                = $subnets
 }
 
 New-Item -ItemType Directory -Path "./generated" -Force | Out-Null
 
 $parameterFilePath = "./generated/parameter-file.json"
+
 $parameterObject |
-    ConvertTo-Json -Depth 10 |
+    ConvertTo-Json -Depth 20 |
     Set-Content -Path $parameterFilePath
 
+$subnetValuesJson = $subnets | ConvertTo-Json -Compress -Depth 20
+
 "parameter_file_path=$parameterFilePath" | Add-Content -Path $env:GITHUB_OUTPUT
+"subnet_values_json=$subnetValuesJson" | Add-Content -Path $env:GITHUB_OUTPUT
+"vnet_name=$VNetName" | Add-Content -Path $env:GITHUB_OUTPUT
+"location=$Location" | Add-Content -Path $env:GITHUB_OUTPUT
 
 Write-Host "Stage B complete"
-Write-Host "Received landing zones: $($landingZones -join ', ')"
+Write-Host "Subnets created:"
+$subnets | ForEach-Object {
+    Write-Host "- Name: $($_.name), CIDR: $($_.cidr), Type: $($_.type)"
+}
 Write-Host "Parameter file created: $parameterFilePath"
