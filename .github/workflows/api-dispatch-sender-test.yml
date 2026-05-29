@@ -1,0 +1,88 @@
+name: ZZZ Sender API Dispatch Test
+run-name: ZZZ Sender API Dispatch Test - ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trigger_repo_b_only:
+    name: ZZZ Trigger Repo B via API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print proof this is the new workflow
+        run: echo "THIS IS THE API-DISPATCH WORKFLOW, NOT workflow_call"
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: geeksat
+          repositories: |
+            ReceiverRepo
+
+      - name: Dispatch Repo B workflow
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $body = @{
+            ref = "main"
+            inputs = @{
+              source_repo   = "${{ github.repository }}"
+              source_run_id = "${{ github.run_id }}"
+              location      = "West Europe"
+              vnet_name     = "vnet-dev-weu-001"
+              subnets_json  = '[{"name":"GatewaySubnet","cidr":"10.20.0.0/27","type":"gateway"}]'
+            }
+          } | ConvertTo-Json -Depth 20 -Compress
+
+          Write-Host "Dispatch body:"
+          Write-Host $body
+
+          Invoke-RestMethod `
+            -Method POST `
+            -Uri "https://api.github.com/repos/geeksat/ReceiverRepo/actions/workflows/receiver-print-subnets.yml/dispatches" `
+            -Headers $headers `
+            -Body $body `
+            -ContentType "application/json"
+
+          Write-Host "Dispatch sent."
+
+      - name: Wait and list Repo B runs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          Start-Sleep -Seconds 10
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          $response = Invoke-RestMethod `
+            -Method GET `
+            -Uri "https://api.github.com/repos/geeksat/ReceiverRepo/actions/workflows/receiver-print-subnets.yml/runs?per_page=5" `
+            -Headers $headers
+
+          $latest = $response.workflow_runs | Select-Object -First 1
+
+          if (-not $latest) {
+            throw "No runs found in ReceiverRepo."
+          }
+
+          Write-Host "Receiver run URL: $($latest.html_url)"
+          Write-Host "Receiver run status: $($latest.status)"
